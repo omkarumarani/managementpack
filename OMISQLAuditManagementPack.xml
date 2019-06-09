@@ -1,0 +1,401 @@
+﻿<?xml version="1.0" encoding="utf-8"?><ManagementPack ContentReadable="true" SchemaVersion="2.0" OriginalSchemaVersion="2.0" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <Manifest>
+    <Identity>
+      <ID>OMISQLAuditManagementPack</ID>
+      <Version>1.0.0.19</Version>
+    </Identity>
+    <Name>OMISQLAuditManagementPack</Name>
+    <References>
+      <Reference Alias="SCInternal">
+        <ID>Microsoft.SystemCenter.Internal</ID>
+        <Version>7.0.8437.0</Version>
+        <PublicKeyToken>31bf3856ad364e35</PublicKeyToken>
+      </Reference>
+      <Reference Alias="Windows">
+        <ID>Microsoft.Windows.Library</ID>
+        <Version>7.5.8501.0</Version>
+        <PublicKeyToken>31bf3856ad364e35</PublicKeyToken>
+      </Reference>
+      <Reference Alias="Performance">
+        <ID>System.Performance.Library</ID>
+        <Version>7.0.8437.0</Version>
+        <PublicKeyToken>31bf3856ad364e35</PublicKeyToken>
+      </Reference>
+      <Reference Alias="System">
+        <ID>System.Library</ID>
+        <Version>7.5.8501.0</Version>
+        <PublicKeyToken>31bf3856ad364e35</PublicKeyToken>
+      </Reference>
+      <Reference Alias="SC">
+        <ID>Microsoft.SystemCenter.Library</ID>
+        <Version>7.0.8437.0</Version>
+        <PublicKeyToken>31bf3856ad364e35</PublicKeyToken>
+      </Reference>
+      <Reference Alias="Health">
+        <ID>System.Health.Library</ID>
+        <Version>7.0.8437.0</Version>
+        <PublicKeyToken>31bf3856ad364e35</PublicKeyToken>
+      </Reference>
+    </References>
+  </Manifest>
+  <TypeDefinitions>
+    <EntityTypes>
+      <ClassTypes>
+        <ClassType ID="OMISQLAuditManagementPack.ServerName" Accessibility="Public" Abstract="false" Base="Windows!Microsoft.Windows.LocalApplication" Hosted="true" Singleton="false" Extension="false">
+          <Property ID="InstanceName" Type="string" AutoIncrement="false" Key="false" CaseSensitive="false" MaxLength="256" MinLength="0" Required="false" Scale="0" />
+          <Property ID="SQLName" Type="string" AutoIncrement="false" Key="false" CaseSensitive="false" MaxLength="256" MinLength="0" Required="false" Scale="0" />
+        </ClassType>
+      </ClassTypes>
+    </EntityTypes>
+    <SecureReferences>
+      <SecureReference ID="OMISQLAuditManagementPack.ServerName.RunasProfile" Accessibility="Public" Context="OMISQLAuditManagementPack.ServerName" />
+    </SecureReferences>
+  </TypeDefinitions>
+  <Monitoring>
+    <Discoveries>
+      <Discovery ID="OMISQLAuditManagementPack.ServerClass" Enabled="true" Target="Windows!Microsoft.Windows.Computer" ConfirmDelivery="true" Remotable="true" Priority="Normal">
+        <Category>Discovery</Category>
+        <DiscoveryTypes>
+          <DiscoveryClass TypeID="OMISQLAuditManagementPack.ServerName">
+            <Property TypeID="OMISQLAuditManagementPack.ServerName" PropertyID="SQLName" />
+            <Property TypeID="OMISQLAuditManagementPack.ServerName" PropertyID="InstanceName" />
+            <Property TypeID="System!System.Entity" PropertyID="DisplayName" />
+          </DiscoveryClass>
+        </DiscoveryTypes>
+        <DataSource ID="OMISQLPowershellDiscoveryProvider" TypeID="Windows!Microsoft.Windows.TimedPowerShell.DiscoveryProvider">
+          <IntervalSeconds>900</IntervalSeconds>
+          <SyncTime />
+          <ScriptName>SQLServerDiscovery.ps1</ScriptName>
+          <ScriptBody>
+            param($sourceId,$managedEntityId,$computerName)
+            $api = new-object -comObject 'MOM.ScriptAPI'
+            $discoveryData = $api.CreateDiscoveryData(0, $SourceId, $ManagedEntityId)
+            $api.LogScriptEvent('SQLServerDiscovery.ps1',11,4,"SqlDiscovery Started")
+            #Check for registry 
+
+            $test= Get-Item "HKLM:\SYSTEM\CurrentControlSet\Services\ClusSvc" -ErrorAction Ignore
+
+#Registry Check Success the process other part of script
+
+            If ($test) {
+            $ClusterService = Get-WmiObject Win32_service | Where {$_.state -eq "Running" -and $_.Name -like 'MSSQL$*' -and $_.startmode -eq 'Manual'} 
+
+Confirm if SQL Service is running in cluster and it will return only active node
+
+            if ($clusterservice.StartMode -eq 'Manual' -and $clusterService.State -eq 'Running' )
+            { [System.Reflection.Assembly]::LoadWithPartialName("Microsoft.SqlServer.SqlWmiManagement") | out-null
+            $mach = '.'
+            $m = New-Object ('Microsoft.SqlServer.Management.Smo.Wmi.ManagedComputer') $mach
+            $CusterVirtualName = Get-ClusterResource | Get-ClusterParameter | Where-Object {$_.Name -eq 'VirtualServerName' -and $_.ClusterObject.Name -notlike "*Agent*" } | select Value
+            $api.LogScriptEvent('SQLServerDiscovery.ps1',12,4,"Discovery in progress")
+            $instance = $discoveryData.CreateClassInstance("$MPElement[Name='OMISQLAuditManagementPack.ServerName']$")
+            $instance.AddProperty("$MPElement[Name='System!System.Entity']/DisplayName$", $computerName)
+            $instance.AddProperty("$MPElement[Name='Windows!Microsoft.Windows.Computer']/PrincipalName$", $computerName)
+            $instance.AddProperty("$MPElement[Name='OMISQLAuditManagementPack.ServerName']/SQLName$", $CusterVirtualName.Value)
+            $instance.AddProperty("$MPElement[Name='OMISQLAuditManagementPack.ServerName']/InstanceName$", $m.ServerInstances.name)
+            $discoveryData.AddInstance($instance)
+            $discoveryData
+            #$api.return($discoveryData)
+            $api.LogScriptEvent('SQLServerDiscovery.ps1',13,4,"Discovery Completed Sending Data")
+                        
+ }
+
+
+    else {$api.LogScriptEvent('SQLServerDiscovery.ps1',16,4,"ClusterSQL Not Present Moving to Normal SQL Script") }
+
+
+ }
+
+    elseif ($test -eq $null)   
+    { 
+        $NormalService = Get-WmiObject Win32_service | Where {$_.state -eq "Running" -and $_.Name -like 'MSSQL*' } 
+
+        If ($NormalService) 
+ 
+        { [System.Reflection.Assembly]::LoadWithPartialName("Microsoft.SqlServer.SqlWmiManagement") | out-null
+            $mach = '.'
+            $m = New-Object ('Microsoft.SqlServer.Management.Smo.Wmi.ManagedComputer') $mach
+            $api.LogScriptEvent('SQLServerDiscovery.ps1',14,4,"Normal Sql DiscoveryStarted")
+            $instance = $discoveryData.CreateClassInstance("$MPElement[Name='OMISQLAuditManagementPack.ServerName']$")
+            $instance.AddProperty("$MPElement[Name='System!System.Entity']/DisplayName$", $computerName)
+            $instance.AddProperty("$MPElement[Name='Windows!Microsoft.Windows.Computer']/PrincipalName$", $computerName)
+            $instance.AddProperty("$MPElement[Name='OMISQLAuditManagementPack.ServerName']/SQLName$", $m.Name)
+            $instance.AddProperty("$MPElement[Name='OMISQLAuditManagementPack.ServerName']/InstanceName$", $m.ServerInstances.name)
+            $discoveryData.AddInstance($instance)
+            #$api.return($discoveryData)
+            $api.LogScriptEvent('SQLServerDiscovery.ps1',15,4,"Normal Sql DiscoveryCompleted")
+	    $discoveryData
+
+        }
+                else { $api.LogScriptEvent('SQLServerDiscovery.ps1',17,4,"Its not a SQL Server") }
+
+}
+          </ScriptBody>
+          <Parameters>
+            <Parameter>
+              <Name>sourceID</Name>
+              <Value>$MPElement$</Value>
+            </Parameter>
+            <Parameter>
+              <Name>managedEntityID</Name>
+              <Value>$Target/Id$</Value>
+            </Parameter>
+            <Parameter>
+              <Name>computerName</Name>
+              <Value>$Target/Property[Type="Windows!Microsoft.Windows.Computer"]/PrincipalName$</Value>
+            </Parameter>
+          </Parameters>
+          <TimeoutSeconds>60</TimeoutSeconds>
+        </DataSource>
+      </Discovery>
+    </Discoveries>
+    <Rules>
+      <Rule ID="OMISQLAuditManagementPack.ServerName.Application.Event_ID.510.Event_Source.SQLAudit.Event.Rule" Enabled="true" Target="OMISQLAuditManagementPack.ServerName" ConfirmDelivery="false" Remotable="true" Priority="Normal" DiscardLevel="100">
+        <Category>EventCollection</Category>
+        <DataSources>
+          <DataSource ID="Microsoft.Windows.EventCollector" TypeID="Windows!Microsoft.Windows.EventCollector">
+            <ComputerName>$Target/Host/Property[Type="Windows!Microsoft.Windows.Computer"]/NetworkName$</ComputerName>
+            <LogName>Application</LogName>
+            <AllowProxying>false</AllowProxying>
+            <Expression>
+              <And>
+                <Expression>
+                  <SimpleExpression>
+                    <ValueExpression>
+                      <XPathQuery Type="UnsignedInteger">EventDisplayNumber</XPathQuery>
+                    </ValueExpression>
+                    <Operator>Equal</Operator>
+                    <ValueExpression>
+                      <Value Type="UnsignedInteger">510</Value>
+                    </ValueExpression>
+                  </SimpleExpression>
+                </Expression>
+                <Expression>
+                  <SimpleExpression>
+                    <ValueExpression>
+                      <XPathQuery Type="String">PublisherName</XPathQuery>
+                    </ValueExpression>
+                    <Operator>Equal</Operator>
+                    <ValueExpression>
+                      <Value Type="String">SQLAudit</Value>
+                    </ValueExpression>
+                  </SimpleExpression>
+                </Expression>
+              </And>
+            </Expression>
+          </DataSource>
+        </DataSources>
+        <WriteActions>
+          <WriteAction ID="Microsoft.SystemCenter.CollectEvent" TypeID="SC!Microsoft.SystemCenter.CollectEvent" />
+        </WriteActions>
+      </Rule>
+      <Rule ID="OMISQLAuditManagementPack.TimedPowerShell.Rule" Enabled="true" Target="OMISQLAuditManagementPack.ServerName" ConfirmDelivery="true" Remotable="true" Priority="Normal" DiscardLevel="100">
+        <Category>Custom</Category>
+        <DataSources>
+          <DataSource ID="Scheduler" TypeID="System!System.Scheduler">
+            <Scheduler>
+              <SimpleReccuringSchedule>
+                <Interval Unit="Seconds">600</Interval>
+                <SyncTime />
+              </SimpleReccuringSchedule>
+              <ExcludeDates />
+            </Scheduler>
+          </DataSource>
+        </DataSources>
+        <WriteActions>
+          <WriteAction ID="WA" RunAs="OMISQLAuditManagementPack.ServerName.RunasProfile" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
+            <ScriptName>OMISQLAuditManagementPack.Rule.ps1</ScriptName>
+            <ScriptBody>
+              #=================================================================================
+              #  Describe Script Here
+              #
+              #  Author:
+              #  v1.0
+              #=================================================================================
+              param($SqlName, $QueryUser,$QueryPwd,$InstanceName)
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  "$SqlName   $QueryUser  $QueryPwd  $InstanceName"   , "Information", 501)
+
+              [System.Diagnostics.EventLog]::CreateEventSource("SQLAudit", "Application")
+		$InstanceNew = $InstanceName.Trimend("/")
+              # Starting Script section - All scripts get this
+              IF ($InstanceNew -ne 'MSSQLSERVER' )
+              {
+              $username = $QueryUser
+              $password = Convertto-securestring $QueryPwd -asplaintext -force
+              $Computer = $SqlName + '\' + $InstanceNew
+	      	
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  "$Computer"   , "Information", 502)
+
+              $Query = 'USE [master]
+              select name from master.sys.server_principals'
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  "$Query "   , "Information", 503)
+
+              #build connection string
+
+              $connstring = "Server=$Computer; Database=Master; "
+              $connstring += "User ID=$username; Password=$password; trusted_connection=true; Integrated Security=SSPI"
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  "$Query "   , "Information", 504)
+
+              #connect to database
+              $connection = New-Object System.Data.SqlClient.SqlConnection($connstring)
+              $connection.Open()
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  $connstring   , "Information", 505)
+
+
+              #build query object
+              $command = $connection.CreateCommand()
+              $command.CommandText = $Query
+              # $command.CommandTimeout = $CommandTimeout
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  " $command $command.CommandText"   , "Information", 506)
+
+              #run query
+              $adapter = New-Object System.Data.SqlClient.SqlDataAdapter $command
+              $Testset = New-Object System.Data.DataSet
+              $adapter.Fill($Testset) | out-null
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  " $Testset"   , "Information", 507)
+
+              #return the first collection of results or an empty array
+              If ($Testset.Tables[0] -ne $null) {$table = $Testset.Tables[0]}
+              ElseIf ($table.Rows.Count -eq 0) { $table = New-Object System.Collections.ArrayList }
+		[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  " $table"   , "Information", 508)
+              $connection.Close()
+              $test= $table.Name
+[System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  $test   , "Information", 507)
+              $Serviceaccount = $test | Where-Object { $_ -ne 'sa' -and  $_ -ne 'Public' -and $_ -ne 'Sysadmin'-and $_ -notLike '*MS_*' -and $_ -notlike '*NT*' -and $_ -ne 'securityadmin' -and $_ -ne 'serveradmin' -and $_ -ne 'setupadmin' -and $_ -ne 'processadmin' -and $_ -ne 'diskadmin' -and $_ -ne 'dbcreator' -and $_ -ne 'bulkadmin' -and $_ -ne 'BUILTIN\Administrators' }
+	      [System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  $Serviceaccount   , "Information", 509) 	              
+$Final = ($Serviceaccount |sort -Unique ) -join ","
+              System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  $Final   , "Information", 510) 
+              }
+
+              else
+              {
+              $username = $QueryUser
+              $password = Convertto-securestring $QueryPwd -asplaintext -force
+              $Computer = $SqlName
+
+              $Query = 'USE [master]
+              select name from master.sys.server_principals'
+
+              #build connection string
+
+              $connstring = "Server=$Computer; Database=Master;"
+              $connstring += "User ID=$username; Password=$password; trusted_connection=true"
+
+              #connect to database
+              $connection = New-Object System.Data.SqlClient.SqlConnection($connstring)
+              $connection.Open()
+
+
+              #build query object
+              $command = $connection.CreateCommand()
+              $command.CommandText = $Query
+              # $command.CommandTimeout = $CommandTimeout
+
+              #run query
+              $adapter = New-Object System.Data.SqlClient.SqlDataAdapter $command
+              $Testset = New-Object System.Data.DataSet
+              $adapter.Fill($Testset) | out-null
+
+              #return the first collection of results or an empty array
+              If ($Testset.Tables[0] -ne $null) {$table = $Testset.Tables[0]}
+              ElseIf ($table.Rows.Count -eq 0) { $table = New-Object System.Collections.ArrayList }
+
+              $connection.Close()
+              $test= $table.Name
+                           
+              $Serviceaccount  = $test | Where-Object { $_ -ne 'sa' -and  $_ -ne 'Public' -and $_ -ne 'Sysadmin'-and $_ -notLike '*MS_*' -and $_ -notlike '*NT*' -and $_ -ne 'securityadmin' -and $_ -ne 'serveradmin' -and $_ -ne 'setupadmin' -and $_ -ne 'processadmin' -and $_ -ne 'diskadmin' -and $_ -ne 'dbcreator' -and $_ -ne 'bulkadmin' }
+              $Final = ($Serviceaccount |sort -Unique ) -join ","
+              }
+              [System.Diagnostics.EventLog]::WriteEntry("SQLAudit",  $Final , "Information", 510)
+              # End of script
+            </ScriptBody>
+            <Parameters>
+              <Parameter>
+                <Name>SqlName</Name>
+                <Value>$Target/Property[Type='OMISQLAuditManagementPack.ServerName']/SQLName$</Value>
+              </Parameter>
+              <Parameter>
+                <Name>InstanceName</Name>
+                <Value>$Target/Property[Type='OMISQLAuditManagementPack.ServerName']/InstanceName$/</Value>
+              </Parameter>
+              <Parameter>
+                <Name>QueryUser</Name>
+                <Value>$RunAs[Name="OMISQLAuditManagementPack.ServerName.RunasProfile"]/UserName$</Value>
+              </Parameter>
+              <Parameter>
+                <Name>QueryPwd</Name>
+                <Value>$RunAs[Name="OMISQLAuditManagementPack.ServerName.RunasProfile"]/Password$</Value>
+              </Parameter>
+            </Parameters>
+            <TimeoutSeconds>120</TimeoutSeconds>
+          </WriteAction>
+        </WriteActions>
+      </Rule>
+    </Rules>
+    <Overrides>
+      <SecureReferenceOverride ID="SecureOverride6eb33dc9_9203_ae66_bc91_8de720fc20d3" Context="System!System.Entity" Enforced="false" SecureReference="OMISQLAuditManagementPack.ServerName.RunasProfile">
+        <Value>00F7368CB9AB367BF4B45C0F3BAD2A5CA95EEE0B0400000000000000000000000000000000000000</Value>
+      </SecureReferenceOverride>
+    </Overrides>
+  </Monitoring>
+  <Presentation>
+    <Views>
+      <View ID="OMISQLAuditManagementPack.ServerName.Application.Event_ID.510.Event_Source.SQLAudit.Event.Rule.View" Accessibility="Public" Enabled="true" Target="OMISQLAuditManagementPack.ServerName" TypeID="SC!Microsoft.SystemCenter.EventViewType" Visible="true">
+        <Category>Operations</Category>
+        <Criteria>
+          <RuleList>
+            <Rule>$MPElement[Name="OMISQLAuditManagementPack.ServerName.Application.Event_ID.510.Event_Source.SQLAudit.Event.Rule"]$</Rule>
+          </RuleList>
+        </Criteria>
+      </View>
+    </Views>
+    <Folders>
+      <Folder ID="OMISQLAuditManagementPack.Microsoft.SystemCenter.Monitoring.ViewFolder.Root.Folder" Accessibility="Public" ParentFolder="SC!Microsoft.SystemCenter.Monitoring.ViewFolder.Root" />
+    </Folders>
+    <FolderItems>
+      <FolderItem ElementID="OMISQLAuditManagementPack.ServerName.Application.Event_ID.510.Event_Source.SQLAudit.Event.Rule.View" ID="OMISQLAuditManagementPack.ServerName.Application.Event_ID.510.Event_Source.SQLAudit.Event.Rule.View.FolderItem" Folder="OMISQLAuditManagementPack.Microsoft.SystemCenter.Monitoring.ViewFolder.Root.Folder" />
+    </FolderItems>
+  </Presentation>
+  <LanguagePacks>
+    <LanguagePack ID="ENU" IsDefault="true">
+      <DisplayStrings>
+        <DisplayString ElementID="OMISQLAuditManagementPack">
+          <Name>OMI SQLAuditManagementPack</Name>
+          <Description>OMI SQLAuditManagementPack</Description>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.Microsoft.SystemCenter.Monitoring.ViewFolder.Root.Folder">
+          <Name>SQL Audit Management Pack</Name>
+          <Description>Created by Ganpati\administrator at 9/1/2018 9:24:11 PM using MP Author</Description>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.ServerClass">
+          <Name>OMI SQL Audit Management Pack Server Discovery</Name>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.ServerName">
+          <Name>OMI SQLAuditManagementPack ServerName</Name>
+          <Description>OMI SQLAuditManagementPack ServerName</Description>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.ServerName.Application.Event_ID.510.Event_Source.SQLAudit.Event.Rule">
+          <Name>ServerName Application Event ID 510 Event Source SQLAudit Event Rule</Name>
+          <Description>Created by Ganpati\administrator at 9/1/2018 3:47:20 PM using MP Author</Description>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.ServerName.Application.Event_ID.510.Event_Source.SQLAudit.Event.Rule.View">
+          <Name>Audit Event View</Name>
+          <Description>Created by Ganpati\administrator at 9/1/2018 9:26:49 PM using MP Author</Description>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.ServerName.RunasProfile">
+          <Name>SQL Audit Management pack Profile</Name>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.ServerName" SubElementID="InstanceName">
+          <Name>Instance Name</Name>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.ServerName" SubElementID="SQLName">
+          <Name>SQL Name</Name>
+          <Description>SQL Name</Description>
+        </DisplayString>
+        <DisplayString ElementID="OMISQLAuditManagementPack.TimedPowerShell.Rule">
+          <Name>SQL Server Audit Event Log Creation Rule</Name>
+        </DisplayString>
+      </DisplayStrings>
+    </LanguagePack>
+  </LanguagePacks>
+</ManagementPack>
